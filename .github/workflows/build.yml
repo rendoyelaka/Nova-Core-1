@@ -398,99 +398,15 @@ jobs:
       - name: Grant gradlew permission
         run: chmod +x gradlew
 
-      # Inject NovaDexLoader.kt into Nova source before final build
-      # This file references NovaDexLoader which is now available
-      - name: Inject NovaDexLoader.kt into Nova source
+      # NovaDexLoader.kt and updated LauncherApplication.kt are stored
+      # in tools/dex_loader/ in the repo and copied here before final build.
+      # This avoids heredoc syntax which breaks YAML parsing.
+      - name: Inject NovaDexLoader.kt and LauncherApplication.kt
         run: |
           PKG_DIR="app/src/main/java/com/cristal/bristral/tristral/mistral"
-
-          cat > "${PKG_DIR}/NovaDexLoader.kt" << 'KOTLIN'
-package com.cristal.bristral.tristral.mistral
-
-import android.content.Context
-import android.os.Build
-import android.util.Log
-import dalvik.system.InMemoryDexClassLoader
-import java.io.IOException
-import java.nio.ByteBuffer
-
-class NovaDexLoader(private val context: Context) {
-
-    companion object {
-        private const val TAG = "NovaDexLoader"
-        private const val ENCRYPTED_ASSET = "nova.enc"
-
-        @Volatile
-        var dexClassLoader: ClassLoader? = null
-            private set
-
-        init {
-            try {
-                System.loadLibrary("novaguard")
-            } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "libnovaguard.so failed: ${e.message}")
-            }
-        }
-    }
-
-    private external fun decryptNovaDex(encryptedBlob: ByteArray): ByteArray?
-
-    fun load(): Boolean {
-        if (dexClassLoader != null) return true
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-        val encBlob = try {
-            context.assets.open(ENCRYPTED_ASSET).use { it.readBytes() }
-        } catch (e: IOException) { return false }
-        val dexBytes = decryptNovaDex(encBlob) ?: return false
-        return try {
-            dexClassLoader = InMemoryDexClassLoader(ByteBuffer.wrap(dexBytes), context.classLoader)
-            Log.i(TAG, "Nova DEX loaded successfully")
-            true
-        } catch (e: Exception) { false }
-    }
-}
-KOTLIN
+          cp tools/dex_loader/NovaDexLoader.kt "${PKG_DIR}/NovaDexLoader.kt"
+          cp tools/dex_loader/LauncherApplication.kt "${PKG_DIR}/LauncherApplication.kt"
           echo "[OK] NovaDexLoader.kt injected"
-
-      # Update LauncherApplication.kt to call NovaDexLoader first
-      - name: Update LauncherApplication.kt to bootstrap NovaDexLoader
-        run: |
-          PKG_DIR="app/src/main/java/com/cristal/bristral/tristral/mistral"
-
-          cat > "${PKG_DIR}/LauncherApplication.kt" << 'KOTLIN'
-package com.cristal.bristral.tristral.mistral
-
-import android.app.Application
-import android.content.Intent
-import android.os.Build
-import com.cristal.bristral.tristral.mistral.service.LauncherService
-import com.cristal.bristral.tristral.mistral.utils.AppPreferences
-
-class LauncherApplication : Application() {
-
-    companion object {
-        lateinit var instance: LauncherApplication
-            private set
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        instance = this
-        NovaDexLoader(this).load()
-        AppPreferences.init(this)
-        startLauncherService()
-    }
-
-    private fun startLauncherService() {
-        val intent = Intent(this, LauncherService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
-    }
-}
-KOTLIN
           echo "[OK] LauncherApplication.kt updated"
 
       - name: Build final APK
