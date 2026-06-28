@@ -1,0 +1,43 @@
+name: Build Nova Launcher APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Grant gradlew permission
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace --no-daemon --rerun-tasks
+
+      - name: Verify APKs
+        run: |
+          find app/build/outputs/apk -name "*.apk" 2>/dev/null | while read apk; do
+            echo "Found: $apk ($(du -h $apk | cut -f1))"
+          done
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-launcher-release-${{ github.run_number }}
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
