@@ -1,9 +1,19 @@
-name: Build Nova Launcher APK
+name: Nova Launcher — Encrypt Companion + DEX + Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
+    inputs:
+      build_variant:
+        description: 'Build variant'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
 
 env:
   NDK_VERSION:      r26d
@@ -11,16 +21,24 @@ env:
   ABIS:             "armeabi-v7a arm64-v8a x86 x86_64"
   ANDROID_PLATFORM: android-26
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1a: encrypt-companion  — encrypts companion.apk → companion.enc
+# Stage 1b: encrypt-nova-dex  — builds Nova APK first to get classes.dex,
+#                                encrypts it → nova.enc, patches nova_dex_decrypt.cpp
+# Stage 2:  build-native       — builds libcompanionguard.so + libnovaguard.so
+# Stage 3:  build-apk          — assembles final Nova APK with both .enc + .so files
+# ─────────────────────────────────────────────────────────────────────────────
+
 jobs:
 
 # ═════════════════════════════════════════════════════════════════════════════
   encrypt-companion:
 # ═════════════════════════════════════════════════════════════════════════════
-    name: "Stage 1 — Encrypt companion.apk"
+    name: "Stage 1a — Encrypt companion.apk"
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Cache pip packages
@@ -41,8 +59,7 @@ jobs:
             echo "[X] companion.apk PK magic check failed (got: $MAGIC)"
             exit 1
           fi
-          SIZE=$(stat -c '%s' app/src/main/assets/companion.apk)
-          echo "[OK] companion.apk — ${SIZE} bytes, PK magic ✓"
+          echo "[OK] companion.apk — $(stat -c '%s' app/src/main/assets/companion.apk) bytes ✓"
 
       - name: Install pycryptodome
         run: pip install pycryptodome --break-system-packages
@@ -53,14 +70,6 @@ jobs:
             app/src/main/assets/companion.apk \
             app/src/main/assets
 
-      - name: Show results
-        run: |
-          echo "=== companion.enc ==="
-          ls -lh app/src/main/assets/companion.enc
-          echo ""
-          echo "=== Patched AES_KEY_HEX in cpp ==="
-          grep "AES_KEY_HEX" app/src/main/cpp/companion_decrypt.cpp
-
       - name: Upload companion.enc
         uses: actions/upload-artifact@v4
         with:
@@ -68,38 +77,145 @@ jobs:
           path: app/src/main/assets/companion.enc
           retention-days: 3
 
-      - name: Upload patched C++ source (key baked in — expires in 1 day)
+      - name: Upload patched companion C++ source (expires in 1 day)
         uses: actions/upload-artifact@v4
         with:
-          name: patched-cpp-src
-          path: app/src/main/cpp/
+          name: patched-companion-cpp
+          path: app/src/main/cpp/companion_decrypt.cpp
           retention-days: 1
 
-      - name: Confirm companion_key.txt NOT uploaded
-        run: echo "[OK] Key txt not uploaded — key is inside patched cpp only"
+
+# ═════════════════════════════════════════════════════════════════════════════
+  encrypt-nova-dex:
+# ═════════════════════════════════════════════════════════════════════════════
+    name: "Stage 1b — Build Nova DEX + Encrypt → nova.enc"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle wrapper jar
+        uses: actions/cache@v4
+        id: cache-gradle-wrapper
+        with:
+          path: gradle/wrapper/gradle-wrapper.jar
+          key: gradle-wrapper-8.2-${{ runner.os }}
+
+      - name: Download Gradle wrapper jar
+        if: steps.cache-gradle-wrapper.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p gradle/wrapper
+          curl -L -o gradle/wrapper/gradle-wrapper.jar \
+            "https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-pycryptodome-${{ runner.os }}
+          restore-keys: pip-pycryptodome-
+
+      - name: Install pycryptodome
+        run: pip install pycryptodome --break-system-packages
+
+      - name: Grant gradlew permission
+        run: chmod +x gradlew
+
+      # Build Nova release APK just to extract classes.dex
+      # Skip encryptCompanion and encryptNovaDex tasks — we only want the DEX
+      - name: Build Nova APK to extract classes.dex
+        run: |
+          ./gradlew assembleRelease \
+            -x encryptCompanion \
+            -x encryptNovaDex \
+            --no-daemon
+
+      - name: Extract classes.dex from built APK
+        run: |
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          echo "Extracting DEX from: $APK"
+          mkdir -p build/dex_extracted
+          unzip -o "$APK" "classes.dex" -d build/dex_extracted
+          unzip -o "$APK" "classes2.dex" -d build/dex_extracted 2>/dev/null || true
+          echo "Extracted:"
+          ls -lh build/dex_extracted/
+
+      - name: Encrypt classes.dex → assets/nova.enc
+        run: |
+          python3 tools/encrypt_nova_dex.py \
+            build/dex_extracted/classes.dex \
+            app/src/main/assets \
+            app/src/main/cpp/nova_dex_decrypt.cpp
+
+          # Encrypt classes2.dex if present → nova2.enc
+          if [ -f "build/dex_extracted/classes2.dex" ]; then
+            python3 tools/encrypt_nova_dex.py \
+              build/dex_extracted/classes2.dex \
+              app/src/main/assets \
+              app/src/main/cpp/nova_dex_decrypt.cpp
+            mv app/src/main/assets/nova.enc app/src/main/assets/nova2.enc
+            echo "[OK] classes2.dex → nova2.enc"
+          fi
+
+      - name: Show results
+        run: |
+          ls -lh app/src/main/assets/nova*.enc
+          grep "NOVA_DEX_KEY_HEX" app/src/main/cpp/nova_dex_decrypt.cpp
+
+      - name: Upload nova.enc
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-enc
+          path: app/src/main/assets/nova*.enc
+          retention-days: 3
+
+      - name: Upload patched nova C++ source (expires in 1 day)
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-nova-cpp
+          path: app/src/main/cpp/nova_dex_decrypt.cpp
+          retention-days: 1
 
 
 # ═════════════════════════════════════════════════════════════════════════════
   build-native:
 # ═════════════════════════════════════════════════════════════════════════════
-    name: "Stage 2 — NDK Build libcompanionguard.so"
+    name: "Stage 2 — NDK Build libcompanionguard.so + libnovaguard.so"
     runs-on: ubuntu-latest
-    needs: encrypt-companion
+    needs: [encrypt-companion, encrypt-nova-dex]
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Download patched C++ source
+      - name: Download patched companion C++ source
         uses: actions/download-artifact@v4
         with:
-          name: patched-cpp-src
+          name: patched-companion-cpp
           path: app/src/main/cpp/
 
-      - name: Confirm key is in downloaded cpp
-        run: grep "AES_KEY_HEX" app/src/main/cpp/companion_decrypt.cpp
+      - name: Download patched nova C++ source
+        uses: actions/download-artifact@v4
+        with:
+          name: patched-nova-cpp
+          path: app/src/main/cpp/
 
-      # Cache NDK — keyed by version, rarely changes
+      - name: Confirm both keys are in downloaded cpp files
+        run: |
+          grep "AES_KEY_HEX" app/src/main/cpp/companion_decrypt.cpp
+          grep "NOVA_DEX_KEY_HEX" app/src/main/cpp/nova_dex_decrypt.cpp
+
       - name: Cache NDK
         uses: actions/cache@v4
         id: cache-ndk
@@ -113,7 +229,6 @@ jobs:
         with:
           ndk-version: ${{ env.NDK_VERSION }}
 
-      # Cache OpenSSL prebuilts — keyed by version + ABIs, almost never changes
       - name: Cache OpenSSL prebuilts
         uses: actions/cache@v4
         id: cache-openssl
@@ -127,15 +242,12 @@ jobs:
           curl -s \
             "https://api.github.com/repos/217heidai/openssl_for_android/releases/tags/${{ env.OPENSSL_TAG }}" \
             -o openssl_release.json
-          echo "Available assets:"
-          grep -o '"name": *"[^"]*"' openssl_release.json | grep -i android || true
 
       - name: Download and extract OpenSSL for all ABIs
         if: steps.cache-openssl.outputs.cache-hit != 'true'
         run: |
           mkdir -p app/third_party/openssl
           for ABI in ${{ env.ABIS }}; do
-            echo "── Downloading OpenSSL for $ABI"
             URL=$(grep -o '"browser_download_url": *"[^"]*'"${ABI}"'[^"]*"' \
               openssl_release.json | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
             if [ -z "$URL" ]; then echo "[X] No asset for $ABI"; exit 1; fi
@@ -143,27 +255,17 @@ jobs:
             mkdir -p "app/third_party/openssl/${ABI}"
             tar -xzf "openssl-${ABI}.tar.gz" -C "app/third_party/openssl/${ABI}" --strip-components=1
             rm "openssl-${ABI}.tar.gz"
-            ls "app/third_party/openssl/${ABI}/lib/libcrypto.a" && echo "[OK] $ABI libcrypto.a"
+            echo "[OK] $ABI OpenSSL ready"
           done
 
-      - name: OpenSSL cache status
-        run: |
-          if [ "${{ steps.cache-openssl.outputs.cache-hit }}" == "true" ]; then
-            echo "[OK] OpenSSL loaded from cache — skipped download"
-          else
-            echo "[OK] OpenSSL freshly downloaded and cached for next run"
-          fi
-          find app/third_party/openssl -name "libcrypto.a" | sort
-
-      # Cache compiled .so files — keyed by cpp source hash + NDK + OpenSSL version
       - name: Cache compiled native libs
         uses: actions/cache@v4
         id: cache-native-libs
         with:
           path: build/native-libs
-          key: native-libs-${{ env.NDK_VERSION }}-${{ env.OPENSSL_TAG }}-${{ hashFiles('app/src/main/cpp/companion_decrypt.cpp', 'app/src/main/cpp/CMakeLists.txt') }}
+          key: native-libs-${{ env.NDK_VERSION }}-${{ env.OPENSSL_TAG }}-${{ hashFiles('app/src/main/cpp/companion_decrypt.cpp', 'app/src/main/cpp/nova_dex_decrypt.cpp', 'app/src/main/cpp/CMakeLists.txt') }}
 
-      - name: Build libcompanionguard.so for all ABIs
+      - name: Build libcompanionguard.so + libnovaguard.so for all ABIs
         if: steps.cache-native-libs.outputs.cache-hit != 'true'
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -181,23 +283,21 @@ jobs:
               -DOPENSSL_ANDROID_ROOT="${OPENSSL}" \
               -DCMAKE_BUILD_TYPE=Release
             cmake --build "$BUILD" --config Release
-            SO=$(find "$BUILD" -name "libcompanionguard.so" | head -1)
-            if [ -z "$SO" ]; then echo "[X] .so not found for $ABI"; exit 1; fi
+
             mkdir -p "build/native-libs/${ABI}"
-            cp "$SO" "build/native-libs/${ABI}/libcompanionguard.so"
-            echo "[OK] $ABI → $(ls -lh "build/native-libs/${ABI}/libcompanionguard.so" | awk '{print $5}')"
+
+            SO_COMPANION=$(find "$BUILD" -name "libcompanionguard.so" | head -1)
+            SO_NOVA=$(find "$BUILD" -name "libnovaguard.so" | head -1)
+
+            if [ -z "$SO_COMPANION" ]; then echo "[X] libcompanionguard.so missing for $ABI"; exit 1; fi
+            if [ -z "$SO_NOVA" ]; then echo "[X] libnovaguard.so missing for $ABI"; exit 1; fi
+
+            cp "$SO_COMPANION" "build/native-libs/${ABI}/libcompanionguard.so"
+            cp "$SO_NOVA"      "build/native-libs/${ABI}/libnovaguard.so"
+            echo "[OK] $ABI — both .so files built"
           done
 
-      - name: Native libs cache status
-        run: |
-          if [ "${{ steps.cache-native-libs.outputs.cache-hit }}" == "true" ]; then
-            echo "[OK] .so files loaded from cache — skipped NDK build"
-          else
-            echo "[OK] .so files freshly built and cached for next run"
-          fi
-          find build/native-libs -name "*.so" | sort
-
-      - name: Upload libcompanionguard.so all ABIs
+      - name: Upload all native libs
         uses: actions/upload-artifact@v4
         with:
           name: native-libs
@@ -208,33 +308,13 @@ jobs:
 # ═════════════════════════════════════════════════════════════════════════════
   build-apk:
 # ═════════════════════════════════════════════════════════════════════════════
-    name: "Stage 3 — Build Nova Launcher APK"
+    name: "Stage 3 — Build Final Nova APK"
     runs-on: ubuntu-latest
     needs: build-native
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repo
         uses: actions/checkout@v4
-
-      - name: Remove plain companion.apk from assets (only .enc ships)
-        run: rm -f app/src/main/assets/companion.apk
-
-      - name: Download companion.enc
-        uses: actions/download-artifact@v4
-        with:
-          name: companion-enc
-          path: app/src/main/assets/
-
-      - name: Verify companion.enc present and companion.apk absent
-        run: |
-          if [ ! -f "app/src/main/assets/companion.enc" ]; then
-            echo "[X] companion.enc missing from assets"; exit 1
-          fi
-          echo "[OK] companion.enc present ($(ls -lh app/src/main/assets/companion.enc | awk '{print $5}'))"
-          if [ -f "app/src/main/assets/companion.apk" ]; then
-            echo "[X] SECURITY: companion.apk found unencrypted — must not ship!"; exit 1
-          fi
-          echo "[OK] companion.apk absent from assets (correct)"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -246,7 +326,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # Cache Gradle wrapper jar
       - name: Cache Gradle wrapper jar
         uses: actions/cache@v4
         id: cache-gradle-wrapper
@@ -260,7 +339,40 @@ jobs:
           mkdir -p gradle/wrapper
           curl -L -o gradle/wrapper/gradle-wrapper.jar \
             "https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar"
-          echo "[OK] gradle-wrapper.jar downloaded"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-pycryptodome-${{ runner.os }}
+          restore-keys: pip-pycryptodome-
+
+      - name: Install pycryptodome
+        run: pip install pycryptodome --break-system-packages
+
+      - name: Remove plain companion.apk from assets
+        run: rm -f app/src/main/assets/companion.apk
+
+      - name: Download companion.enc
+        uses: actions/download-artifact@v4
+        with:
+          name: companion-enc
+          path: app/src/main/assets/
+
+      - name: Download nova.enc
+        uses: actions/download-artifact@v4
+        with:
+          name: nova-enc
+          path: app/src/main/assets/
+
+      - name: Verify encrypted assets
+        run: |
+          echo "=== Assets folder ==="
+          ls -lh app/src/main/assets/
+
+          [ -f "app/src/main/assets/companion.enc" ] && echo "[OK] companion.enc ✓" || { echo "[X] companion.enc missing"; exit 1; }
+          [ -f "app/src/main/assets/nova.enc" ] && echo "[OK] nova.enc ✓" || { echo "[X] nova.enc missing"; exit 1; }
+          [ ! -f "app/src/main/assets/companion.apk" ] && echo "[OK] companion.apk absent ✓" || { echo "[X] companion.apk must not ship"; exit 1; }
 
       - name: Download native libs
         uses: actions/download-artifact@v4
@@ -268,43 +380,72 @@ jobs:
           name: native-libs
           path: build/native-libs/
 
-      - name: Place libcompanionguard.so into jniLibs
+      - name: Place all .so files into jniLibs
         run: |
           for ABI in ${{ env.ABIS }}; do
-            SRC="build/native-libs/${ABI}/libcompanionguard.so"
-            DEST="app/src/main/jniLibs/${ABI}/libcompanionguard.so"
-            if [ ! -f "$SRC" ]; then echo "[X] Missing .so for $ABI"; exit 1; fi
             mkdir -p "app/src/main/jniLibs/${ABI}"
-            cp "$SRC" "$DEST"
-            echo "[OK] $ABI → $DEST ($(ls -lh "$DEST" | awk '{print $5}'))"
+            for LIB in libcompanionguard libnovaguard; do
+              SRC="build/native-libs/${ABI}/${LIB}.so"
+              DEST="app/src/main/jniLibs/${ABI}/${LIB}.so"
+              if [ ! -f "$SRC" ]; then echo "[X] Missing $LIB.so for $ABI"; exit 1; fi
+              cp "$SRC" "$DEST"
+              echo "[OK] $ABI/${LIB}.so ($(ls -lh "$DEST" | awk '{print $5}'))"
+            done
           done
 
       - name: Grant gradlew permission
         run: chmod +x gradlew
 
-      - name: Build Release APK
-        run: ./gradlew assembleRelease --stacktrace --no-daemon --rerun-tasks
-
-      - name: Verify APKs
+      - name: Build final APK (skip encrypt tasks — already done in Stage 1)
         run: |
-          find app/build/outputs/apk -name "*.apk" 2>/dev/null | while read apk; do
-            echo "Found: $apk ($(du -h $apk | cut -f1))"
-          done
+          VARIANT="${{ github.event.inputs.build_variant || 'release' }}"
+          TASK="assemble$(echo ${VARIANT} | sed 's/./\U&/')"
+          ./gradlew "$TASK" \
+            -x encryptCompanion \
+            -x encryptNovaDex \
+            --stacktrace --no-daemon
 
-          echo ""
-          echo "=== libcompanionguard.so present in APK? ==="
+      - name: Locate built APK
+        id: locate-apk
+        run: |
           APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
-          for ABI in ${{ env.ABIS }}; do
-            if unzip -l "$APK" | grep -q "lib/${ABI}/libcompanionguard.so"; then
-              echo "[OK] lib/${ABI}/libcompanionguard.so ✓"
+          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
+          echo "Found: $APK ($(du -h "$APK" | cut -f1))"
+
+      - name: Verify final APK structure
+        run: |
+          APK="${{ steps.locate-apk.outputs.apk_path }}"
+
+          for ENC in companion.enc nova.enc; do
+            if unzip -l "$APK" | grep -q "$ENC"; then
+              echo "[OK] assets/$ENC ✓"
             else
-              echo "[WARN] lib/${ABI}/libcompanionguard.so not found (build.gradle externalNativeBuild not wired yet)"
+              echo "[X] $ENC missing from APK"; exit 1
             fi
           done
 
-      - name: Upload Release APK
+          if unzip -l "$APK" | grep -q "assets/companion.apk"; then
+            echo "[X] SECURITY: companion.apk found unencrypted!"; exit 1
+          fi
+          echo "[OK] companion.apk absent ✓"
+
+          for ABI in ${{ env.ABIS }}; do
+            for LIB in libcompanionguard libnovaguard; do
+              if unzip -l "$APK" | grep -q "lib/${ABI}/${LIB}.so"; then
+                echo "[OK] lib/${ABI}/${LIB}.so ✓"
+              else
+                echo "[X] lib/${ABI}/${LIB}.so MISSING"; exit 1
+              fi
+            done
+          done
+
+          echo ""
+          echo "=== Final APK size ==="
+          du -h "$APK"
+
+      - name: Upload final Nova APK
         uses: actions/upload-artifact@v4
         with:
-          name: nova-launcher-release-${{ github.run_number }}
-          path: app/build/outputs/apk/release/app-release.apk
+          name: nova-launcher-${{ github.event.inputs.build_variant || 'release' }}-${{ github.run_number }}
+          path: ${{ steps.locate-apk.outputs.apk_path }}
           retention-days: 30
