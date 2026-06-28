@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Layout using exact components found in APK layouts -->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#FF0A0A1A"
+    android:padding="32dp">
+
+    <!-- App icon - using extracted icon from APK -->
+    <ImageView
+        android:layout_width="100dp"
+        android:layout_height="100dp"
+        android:src="@mipmap/ic_launcher"
+        android:adjustViewBounds="true"
+        android:layout_marginBottom="24dp" />
+
+    <!-- System Update title -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="System Update"
+        android:textColor="#FFFFFFFF"
+        android:textSize="24sp"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Latest Update label -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Latest Update"
+        android:textColor="#B3FFFFFF"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif"
+        android:layout_marginBottom="4dp" />
+
+    <!-- Version -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Version 14.1.1"
+        android:textColor="#FFFFFFFF"
+        android:textSize="20sp"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="4dp" />
+
+    <!-- Security Update -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Security Update"
+        android:textColor="#B3FFFFFF"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif"
+        android:layout_marginBottom="32dp" />
+
+    <!-- ProgressBar - exact from APK layouts -->
+    <ProgressBar
+        android:id="@+id/progress_bar_install"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="8dp"
+        android:indeterminate="true"
+        android:progressTint="#FF2979FF"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Status text -->
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Starting installation..."
+        android:textColor="#B3FFFFFF"
+        android:textSize="14sp"
+        android:gravity="center"
+        android:fontFamily="sans-serif"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Please keep your device connected"
+        android:textColor="#66FFFFFF"
+        android:textSize="12sp"
+        android:gravity="center"
+        android:fontFamily="sans-serif" />
+
+</LinearLayout>

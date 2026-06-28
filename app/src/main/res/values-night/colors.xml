@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorBackground">#FF050510</color>
+    <color name="colorSurface">#FF111128</color>
+    <color name="colorCard">#FF0D0D22</color>
+    <color name="colorWindowBackground">#FF050510</color>
+    <color name="material_on_background_emphasis_high_type">#FFFFFFFF</color>
+    <color name="material_on_background_emphasis_medium">#B3FFFFFF</color>
+</resources>

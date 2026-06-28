@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Primary -->
+    <color name="colorPrimary">#FF1565C0</color>
+    <color name="colorPrimaryDark">#FF0D47A1</color>
+    <color name="colorPrimaryVariant">#FF1976D2</color>
+    <color name="colorAccent">#FF2979FF</color>
+    <color name="colorSecondary">#FF00BCD4</color>
+    <color name="colorSecondaryVariant">#FF0097A7</color>
+
+    <!-- Background -->
+    <color name="colorBackground">#FF0A0A1A</color>
+    <color name="colorSurface">#FF1A1A2E</color>
+    <color name="colorCard">#FF16213E</color>
+    <color name="colorWindowBackground">#FF0A0A1A</color>
+
+    <!-- Text -->
+    <color name="colorOnPrimary">#FFFFFFFF</color>
+    <color name="colorOnBackground">#FFFFFFFF</color>
+    <color name="colorOnSurface">#FFFFFFFF</color>
+    <color name="colorTextPrimary">#FFFFFFFF</color>
+    <color name="colorTextSecondary">#B3FFFFFF</color>
+    <color name="colorTextHint">#66FFFFFF</color>
+
+    <!-- UI Elements -->
+    <color name="colorIconTint">#FFFFFFFF</color>
+    <color name="colorSearchBg">#33FFFFFF</color>
+    <color name="colorDivider">#1FFFFFFF</color>
+    <color name="colorRipple">#33FFFFFF</color>
+    <color name="colorDockBg">#AA0D0D2E</color>
+    <color name="colorStatusBar">#00000000</color>
+
+    <!-- Material Components -->
+    <color name="colorError">#FFB00020</color>
+    <color name="colorOnError">#FFFFFFFF</color>
+    <color name="colorChipBackground">#33FFFFFF</color>
+    <color name="colorChipText">#FFFFFFFF</color>
+    <color name="colorSnackbarBackground">#FF323232</color>
+    <color name="colorNavigationBackground">#FF1A1A2E</color>
+    <color name="colorFabBackground">#FF2979FF</color>
+
+    <!-- TextInputLayout -->
+    <color name="colorInputBackground">#22FFFFFF</color>
+    <color name="colorInputStroke">#66FFFFFF</color>
+    <color name="colorInputStrokeError">#FFB00020</color>
+    <color name="colorInputLabel">#B3FFFFFF</color>
+
+    <!-- Material baseline -->
+    <color name="material_on_background_emphasis_high_type">#DE000000</color>
+    <color name="material_on_background_emphasis_medium">#99000000</color>
+</resources>

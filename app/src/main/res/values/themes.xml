@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base App Theme -->
+    <style name="AppTheme" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorPrimaryVariant">@color/colorPrimaryVariant</item>
+        <item name="colorSecondary">@color/colorSecondary</item>
+        <item name="colorSecondaryVariant">@color/colorSecondaryVariant</item>
+        <item name="colorAccent">@color/colorAccent</item>
+        <item name="colorError">@color/colorError</item>
+        <item name="android:colorBackground">@color/colorBackground</item>
+        <item name="android:windowBackground">@color/colorBackground</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+
+        <!-- MaterialButton style -->
+        <item name="materialButtonStyle">@style/Widget.MaterialComponents.Button</item>
+
+        <!-- TextInputLayout style -->
+        <item name="textInputStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox</item>
+
+        <!-- Chip style -->
+        <item name="chipStyle">@style/Widget.MaterialComponents.Chip.Filter</item>
+
+        <!-- Snackbar style -->
+        <item name="snackbarStyle">@style/Widget.MaterialComponents.Snackbar</item>
+
+        <!-- NavigationView style -->
+        <item name="navigationViewStyle">@style/Widget.MaterialComponents.NavigationView</item>
+    </style>
+
+    <!-- Translucent for App Drawer -->
+    <style name="AppTheme.Translucent" parent="AppTheme">
+        <item name="android:windowBackground">@color/colorBackground</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.6</item>
+    </style>
+
+    <!-- MaterialButton -->
+    <style name="AppTheme.MaterialButton" parent="Widget.MaterialComponents.Button">
+        <item name="backgroundTint">@color/colorPrimary</item>
+        <item name="android:textColor">@color/colorOnPrimary</item>
+        <item name="cornerRadius">12dp</item>
+        <item name="elevation">4dp</item>
+    </style>
+
+    <!-- OutlinedButton -->
+    <style name="AppTheme.OutlinedButton" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="strokeColor">@color/colorPrimary</item>
+        <item name="android:textColor">@color/colorPrimary</item>
+        <item name="cornerRadius">12dp</item>
+    </style>
+
+    <!-- TextInputLayout -->
+    <style name="AppTheme.TextInput" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        <item name="boxStrokeColor">@color/colorInputStroke</item>
+        <item name="boxBackgroundColor">@color/colorInputBackground</item>
+        <item name="hintTextColor">@color/colorInputLabel</item>
+        <item name="android:textColorHint">@color/colorTextHint</item>
+        <item name="errorTextColor">@color/colorInputStrokeError</item>
+    </style>
+
+    <!-- Chip -->
+    <style name="AppTheme.Chip" parent="Widget.MaterialComponents.Chip.Filter">
+        <item name="chipBackgroundColor">@color/colorChipBackground</item>
+        <item name="android:textColor">@color/colorChipText</item>
+        <item name="chipStrokeColor">@color/colorAccent</item>
+        <item name="chipStrokeWidth">1dp</item>
+        <item name="checkedIconVisible">true</item>
+        <item name="chipCornerRadius">16dp</item>
+    </style>
+
+    <!-- Snackbar -->
+    <style name="AppTheme.Snackbar" parent="Widget.MaterialComponents.Snackbar">
+        <item name="android:background">@color/colorSnackbarBackground</item>
+        <item name="actionTextColorAlpha">1</item>
+    </style>
+
+    <!-- NavigationView -->
+    <style name="AppTheme.NavigationView" parent="Widget.MaterialComponents.NavigationView">
+        <item name="android:background">@color/colorNavigationBackground</item>
+        <item name="itemTextColor">@color/colorTextPrimary</item>
+        <item name="itemIconTint">@color/colorIconTint</item>
+    </style>
+
+    <!-- FAB -->
+    <style name="AppTheme.FAB" parent="Widget.MaterialComponents.FloatingActionButton">
+        <item name="backgroundTint">@color/colorFabBackground</item>
+        <item name="tint">@color/colorOnPrimary</item>
+        <item name="elevation">6dp</item>
+        <item name="fabSize">normal</item>
+    </style>
+
+    <!-- Clock style -->
+    <style name="ClockStyle">
+        <item name="android:textColor">@color/colorTextPrimary</item>
+        <item name="android:textSize">52sp</item>
+        <item name="android:fontFamily">sans-serif-light</item>
+    </style>
+
+    <!-- Date style -->
+    <style name="DateStyle">
+        <item name="android:textColor">@color/colorTextSecondary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">true</item>
+    </style>
+
+</resources>

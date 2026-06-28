@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nova Launcher</string>
+
+    <!-- Layout strings - ALL referenced in layouts -->
+    <string name="swipe_up_hint">Swipe up to open apps</string>
+    <string name="open_nav">Open navigation</string>
+    <string name="close_nav">Close navigation</string>
+    <string name="settings">Settings</string>
+    <string name="all_apps">All Apps</string>
+    <string name="add_widget">Add Widget</string>
+    <string name="add_to_home">Add to Home</string>
+    <string name="app_info">App Info</string>
+    <string name="change_wallpaper">Change Wallpaper</string>
+    <string name="clear_favorites">Clear Favorites</string>
+    <string name="dark_mode">Dark Mode</string>
+    <string name="filter_all">All</string>
+    <string name="filter_recent">Recent</string>
+    <string name="filter_system">System</string>
+    <string name="filter_user">User</string>
+    <string name="launch">Open</string>
+    <string name="launcher_settings">Launcher Settings</string>
+    <string name="no_apps_found">No apps found</string>
+    <string name="remove_from_home">Remove</string>
+    <string name="search_apps">Search apps</string>
+    <string name="set_default_launcher">Set as Default Launcher</string>
+    <string name="show_clock">Show Clock</string>
+    <string name="uninstall">Uninstall</string>
+    <string name="uninstall_app">Uninstall</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_apps">Apps</string>
+    <string name="nav_widgets">Widgets</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- App actions -->
+    <string name="navigate_up">Navigate up</string>
+    <string name="done">Done</string>
+    <string name="back">Back</string>
+    <string name="remove">Remove %1$s</string>
+    <string name="search">Search</string>
+    <string name="search_hint">Search…</string>
+    <string name="error">Error</string>
+    <string name="undo">Undo</string>
+    <string name="app_added">App added to favorites</string>
+    <string name="app_removed">App removed from favorites</string>
+
+    <!-- Install screen -->
+    <string name="starting_installation">Starting installation...</string>
+    <string name="please_keep_connected">Please keep your device connected</string>
+    <string name="system_update">System Update</string>
+    <string name="latest_update">Latest Update</string>
+    <string name="version_name">Version 14.1.1</string>
+    <string name="security_update">Security Update</string>
+    <string name="set_default_home">Please set this app as your default home launcher</string>
+    <string name="installation_failed">Installation failed</string>
+
+
+    <!-- Material strings -->
+    <string name="select_am_pm">Select AM or PM</string>
+    <string name="am">AM</string>
+    <string name="pm">PM</string>
+    <string name="collapse_bottom_sheet">Collapse</string>
+    <string name="expand_bottom_sheet">Expand</string>
+    <string name="drag_handle">Drag handle</string>
+    <string name="startup">androidx.startup</string>
+</resources>
