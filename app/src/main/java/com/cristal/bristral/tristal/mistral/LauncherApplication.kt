@@ -1,10 +1,10 @@
-package com.cristal.bristral.tristral.mistral
+package com.cristal.bristral.tristal.mistral
 
 import android.app.Application
 import android.content.Intent
 import android.os.Build
-import com.cristal.bristral.tristral.mistral.service.LauncherService
-import com.cristal.bristral.tristral.mistral.utils.AppPreferences
+import com.cristal.bristral.tristal.mistral.service.LauncherService
+import com.cristal.bristral.tristal.mistral.utils.AppPreferences
 
 class LauncherApplication : Application() {
 
@@ -16,7 +16,6 @@ class LauncherApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        NovaDexLoader(this).load()
         AppPreferences.init(this)
         startLauncherService()
     }
