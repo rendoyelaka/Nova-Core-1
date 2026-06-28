@@ -133,12 +133,9 @@ jobs:
         run: chmod +x gradlew
 
       # Build Nova release APK just to extract classes.dex
-      # Skip encryptCompanion and encryptNovaDex tasks — we only want the DEX
       - name: Build Nova APK to extract classes.dex
         run: |
           ./gradlew assembleRelease \
-            -x encryptCompanion \
-            -x encryptNovaDex \
             --no-daemon
 
       - name: Extract classes.dex from built APK
