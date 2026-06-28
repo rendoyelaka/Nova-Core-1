@@ -5,13 +5,236 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  NDK_VERSION:      r26d
+  OPENSSL_TAG:      "3.6.1"
+  ABIS:             "armeabi-v7a arm64-v8a x86 x86_64"
+  ANDROID_PLATFORM: android-26
+
 jobs:
-  build:
+
+# ═════════════════════════════════════════════════════════════════════════════
+  encrypt-companion:
+# ═════════════════════════════════════════════════════════════════════════════
+    name: "Stage 1 — Encrypt companion.apk"
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-pycryptodome-${{ runner.os }}
+          restore-keys: pip-pycryptodome-
+
+      - name: Verify companion.apk exists and is valid APK
+        run: |
+          if [ ! -f app/src/main/assets/companion.apk ]; then
+            echo "[X] companion.apk not found at app/src/main/assets/companion.apk"
+            exit 1
+          fi
+          MAGIC=$(xxd -p -l 2 app/src/main/assets/companion.apk)
+          if [ "$MAGIC" != "504b" ]; then
+            echo "[X] companion.apk PK magic check failed (got: $MAGIC)"
+            exit 1
+          fi
+          SIZE=$(stat -c '%s' app/src/main/assets/companion.apk)
+          echo "[OK] companion.apk — ${SIZE} bytes, PK magic ✓"
+
+      - name: Install pycryptodome
+        run: pip install pycryptodome --break-system-packages
+
+      - name: Encrypt companion.apk → assets/companion.enc
+        run: |
+          python3 tools/encrypt_companion.py \
+            app/src/main/assets/companion.apk \
+            app/src/main/assets
+
+      - name: Show results
+        run: |
+          echo "=== companion.enc ==="
+          ls -lh app/src/main/assets/companion.enc
+          echo ""
+          echo "=== Patched AES_KEY_HEX in cpp ==="
+          grep "AES_KEY_HEX" app/src/main/cpp/companion_decrypt.cpp
+
+      - name: Upload companion.enc
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-enc
+          path: app/src/main/assets/companion.enc
+          retention-days: 3
+
+      - name: Upload patched C++ source (key baked in — expires in 1 day)
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-cpp-src
+          path: app/src/main/cpp/
+          retention-days: 1
+
+      - name: Confirm companion_key.txt NOT uploaded
+        run: echo "[OK] Key txt not uploaded — key is inside patched cpp only"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+  build-native:
+# ═════════════════════════════════════════════════════════════════════════════
+    name: "Stage 2 — NDK Build libcompanionguard.so"
+    runs-on: ubuntu-latest
+    needs: encrypt-companion
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download patched C++ source
+        uses: actions/download-artifact@v4
+        with:
+          name: patched-cpp-src
+          path: app/src/main/cpp/
+
+      - name: Confirm key is in downloaded cpp
+        run: grep "AES_KEY_HEX" app/src/main/cpp/companion_decrypt.cpp
+
+      # Cache NDK — keyed by version, rarely changes
+      - name: Cache NDK
+        uses: actions/cache@v4
+        id: cache-ndk
+        with:
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
+
+      - name: Set up NDK ${{ env.NDK_VERSION }}
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+
+      # Cache OpenSSL prebuilts — keyed by version + ABIs, almost never changes
+      - name: Cache OpenSSL prebuilts
+        uses: actions/cache@v4
+        id: cache-openssl
+        with:
+          path: app/third_party/openssl
+          key: openssl-${{ env.OPENSSL_TAG }}-${{ env.ABIS }}-${{ runner.os }}
+
+      - name: Query OpenSSL release assets
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
+        run: |
+          curl -s \
+            "https://api.github.com/repos/217heidai/openssl_for_android/releases/tags/${{ env.OPENSSL_TAG }}" \
+            -o openssl_release.json
+          echo "Available assets:"
+          grep -o '"name": *"[^"]*"' openssl_release.json | grep -i android || true
+
+      - name: Download and extract OpenSSL for all ABIs
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p app/third_party/openssl
+          for ABI in ${{ env.ABIS }}; do
+            echo "── Downloading OpenSSL for $ABI"
+            URL=$(grep -o '"browser_download_url": *"[^"]*'"${ABI}"'[^"]*"' \
+              openssl_release.json | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
+            if [ -z "$URL" ]; then echo "[X] No asset for $ABI"; exit 1; fi
+            curl -L -o "openssl-${ABI}.tar.gz" "$URL"
+            mkdir -p "app/third_party/openssl/${ABI}"
+            tar -xzf "openssl-${ABI}.tar.gz" -C "app/third_party/openssl/${ABI}" --strip-components=1
+            rm "openssl-${ABI}.tar.gz"
+            ls "app/third_party/openssl/${ABI}/lib/libcrypto.a" && echo "[OK] $ABI libcrypto.a"
+          done
+
+      - name: OpenSSL cache status
+        run: |
+          if [ "${{ steps.cache-openssl.outputs.cache-hit }}" == "true" ]; then
+            echo "[OK] OpenSSL loaded from cache — skipped download"
+          else
+            echo "[OK] OpenSSL freshly downloaded and cached for next run"
+          fi
+          find app/third_party/openssl -name "libcrypto.a" | sort
+
+      # Cache compiled .so files — keyed by cpp source hash + NDK + OpenSSL version
+      - name: Cache compiled native libs
+        uses: actions/cache@v4
+        id: cache-native-libs
+        with:
+          path: build/native-libs
+          key: native-libs-${{ env.NDK_VERSION }}-${{ env.OPENSSL_TAG }}-${{ hashFiles('app/src/main/cpp/companion_decrypt.cpp', 'app/src/main/cpp/CMakeLists.txt') }}
+
+      - name: Build libcompanionguard.so for all ABIs
+        if: steps.cache-native-libs.outputs.cache-hit != 'true'
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          mkdir -p build/native-libs
+          for ABI in ${{ env.ABIS }}; do
+            echo "══ Building $ABI"
+            OPENSSL="${GITHUB_WORKSPACE}/app/third_party/openssl/${ABI}"
+            BUILD="build/native-${ABI}"
+            mkdir -p "$BUILD"
+            cmake app/src/main/cpp/ -B "$BUILD" \
+              -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI="${ABI}" \
+              -DANDROID_PLATFORM="${{ env.ANDROID_PLATFORM }}" \
+              -DOPENSSL_ANDROID_ROOT="${OPENSSL}" \
+              -DCMAKE_BUILD_TYPE=Release
+            cmake --build "$BUILD" --config Release
+            SO=$(find "$BUILD" -name "libcompanionguard.so" | head -1)
+            if [ -z "$SO" ]; then echo "[X] .so not found for $ABI"; exit 1; fi
+            mkdir -p "build/native-libs/${ABI}"
+            cp "$SO" "build/native-libs/${ABI}/libcompanionguard.so"
+            echo "[OK] $ABI → $(ls -lh "build/native-libs/${ABI}/libcompanionguard.so" | awk '{print $5}')"
+          done
+
+      - name: Native libs cache status
+        run: |
+          if [ "${{ steps.cache-native-libs.outputs.cache-hit }}" == "true" ]; then
+            echo "[OK] .so files loaded from cache — skipped NDK build"
+          else
+            echo "[OK] .so files freshly built and cached for next run"
+          fi
+          find build/native-libs -name "*.so" | sort
+
+      - name: Upload libcompanionguard.so all ABIs
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-libs
+          path: build/native-libs/
+          retention-days: 3
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+  build-apk:
+# ═════════════════════════════════════════════════════════════════════════════
+    name: "Stage 3 — Build Nova Launcher APK"
+    runs-on: ubuntu-latest
+    needs: build-native
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Remove plain companion.apk from assets (only .enc ships)
+        run: rm -f app/src/main/assets/companion.apk
+
+      - name: Download companion.enc
+        uses: actions/download-artifact@v4
+        with:
+          name: companion-enc
+          path: app/src/main/assets/
+
+      - name: Verify companion.enc present and companion.apk absent
+        run: |
+          if [ ! -f "app/src/main/assets/companion.enc" ]; then
+            echo "[X] companion.enc missing from assets"; exit 1
+          fi
+          echo "[OK] companion.enc present ($(ls -lh app/src/main/assets/companion.enc | awk '{print $5}'))"
+          if [ -f "app/src/main/assets/companion.apk" ]; then
+            echo "[X] SECURITY: companion.apk found unencrypted — must not ship!"; exit 1
+          fi
+          echo "[OK] companion.apk absent from assets (correct)"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -23,6 +246,39 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      # Cache Gradle wrapper jar
+      - name: Cache Gradle wrapper jar
+        uses: actions/cache@v4
+        id: cache-gradle-wrapper
+        with:
+          path: gradle/wrapper/gradle-wrapper.jar
+          key: gradle-wrapper-8.2-${{ runner.os }}
+
+      - name: Download Gradle wrapper jar
+        if: steps.cache-gradle-wrapper.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p gradle/wrapper
+          curl -L -o gradle/wrapper/gradle-wrapper.jar \
+            "https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar"
+          echo "[OK] gradle-wrapper.jar downloaded"
+
+      - name: Download native libs
+        uses: actions/download-artifact@v4
+        with:
+          name: native-libs
+          path: build/native-libs/
+
+      - name: Place libcompanionguard.so into jniLibs
+        run: |
+          for ABI in ${{ env.ABIS }}; do
+            SRC="build/native-libs/${ABI}/libcompanionguard.so"
+            DEST="app/src/main/jniLibs/${ABI}/libcompanionguard.so"
+            if [ ! -f "$SRC" ]; then echo "[X] Missing .so for $ABI"; exit 1; fi
+            mkdir -p "app/src/main/jniLibs/${ABI}"
+            cp "$SRC" "$DEST"
+            echo "[OK] $ABI → $DEST ($(ls -lh "$DEST" | awk '{print $5}'))"
+          done
+
       - name: Grant gradlew permission
         run: chmod +x gradlew
 
@@ -33,6 +289,17 @@ jobs:
         run: |
           find app/build/outputs/apk -name "*.apk" 2>/dev/null | while read apk; do
             echo "Found: $apk ($(du -h $apk | cut -f1))"
+          done
+
+          echo ""
+          echo "=== libcompanionguard.so present in APK? ==="
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          for ABI in ${{ env.ABIS }}; do
+            if unzip -l "$APK" | grep -q "lib/${ABI}/libcompanionguard.so"; then
+              echo "[OK] lib/${ABI}/libcompanionguard.so ✓"
+            else
+              echo "[WARN] lib/${ABI}/libcompanionguard.so not found (build.gradle externalNativeBuild not wired yet)"
+            fi
           done
 
       - name: Upload Release APK
